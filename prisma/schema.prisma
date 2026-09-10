@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums — the single source of truth. `src/types` re-exports these.
+// ---------------------------------------------------------------------------
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum DataStructure {
+  ARRAY
+  STRING
+  HASH_MAP
+  HASH_SET
+  LINKED_LIST
+  STACK
+  QUEUE
+  DEQUE
+  HEAP
+  BINARY_TREE
+  BINARY_SEARCH_TREE
+  TRIE
+  GRAPH
+  MATRIX
+  UNION_FIND
+  SEGMENT_TREE
+  FENWICK_TREE
+  BIT_MANIPULATION
+}
+
+enum AlgorithmicTechnique {
+  TWO_POINTERS
+  SLIDING_WINDOW
+  BINARY_SEARCH
+  DFS
+  BFS
+  TOPOLOGICAL_SORT
+  BACKTRACKING
+  DYNAMIC_PROGRAMMING
+  GREEDY
+  DIVIDE_AND_CONQUER
+  RECURSION
+  SORTING
+  PREFIX_SUM
+  MONOTONIC_STACK
+  FAST_SLOW_POINTERS
+  INTERVALS
+  MEMOIZATION
+  SIMULATION
+}
+
+/// Ordered loosely by growth rate; see COMPLEXITY_RANK in src/types.
+enum Complexity {
+  O_1
+  O_LOG_N
+  O_SQRT_N
+  O_N
+  O_N_LOG_N
+  O_N_SQUARED
+  O_N_CUBED
+  O_2_POW_N
+  O_N_FACTORIAL
+  O_N_TIMES_M
+}
+
+/// Distinguishes which taxonomy a UserCategoryStat row belongs to.
+enum CategoryKind {
+  DATA_STRUCTURE
+  TECHNIQUE
+}
+
+// ---------------------------------------------------------------------------
+// Core models
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Denormalized counters. Kept in sync inside the submit transaction so the
+  /// dashboard never has to aggregate the full Attempt table on read.
+  totalAttempts     Int @default(0)
+  totalFullyCorrect Int @default(0)
+
+  attempts      Attempt[]
+  categoryStats UserCategoryStat[]
+
+  @@map("users")
+}
+
+model Problem {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  title       String
+  description String     @db.Text
+  difficulty  Difficulty
+  leetcodeId  Int?       @unique
+  sourceUrl   String?
+
+  // --- Ground truth ---
+  correctDataStructures  DataStructure[]
+  correctTechniques      AlgorithmicTechnique[]
+  optimalTimeComplexity  Complexity
+  optimalSpaceComplexity Complexity
+
+  /// Seed text for the LLM feedback prompt. Not shown to the user pre-attempt.
+  optimalApproachSummary String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  edgeCases EdgeCase[]
+  attempts  Attempt[]
+
+  @@index([difficulty])
+  @@map("problems")
+}
+
+/// Edge cases are rows rather than a String[] because the UI presents a mixed
+/// list of real edge cases and plausible decoys. `isRequired = false` rows are
+/// the decoys — selecting one is a false positive.
+model EdgeCase {
+  id          String  @id @default(cuid())
+  problemId   String
+  description String
+  isRequired  Boolean @default(true)
+  explanation String? @db.Text
+
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([problemId])
+  @@map("edge_cases")
+}
+
+/// An immutable log of one submission. Grading results are snapshotted so that
+/// later edits to a Problem's ground truth don't rewrite history.
+model Attempt {
+  id        String @id @default(cuid())
+  userId    String
+  problemId String
+
+  // --- User submission ---
+  selectedDataStructures  DataStructure[]
+  selectedTechniques      AlgorithmicTechnique[]
+  selectedTimeComplexity  Complexity
+  selectedSpaceComplexity Complexity
+  selectedEdgeCaseIds     String[]
+
+  // --- Grading snapshot ---
+  dataStructuresCorrect  Boolean
+  techniquesCorrect      Boolean
+  timeComplexityCorrect  Boolean
+  spaceComplexityCorrect Boolean
+  edgeCasesCorrect       Boolean
+  isFullyCorrect         Boolean
+  /// Weighted 0..1 partial-credit score. See GRADING_WEIGHTS.
+  score                  Float
+
+  /// Null when the feedback provider failed or was disabled — grading must
+  /// never block on the LLM call.
+  feedback   String? @db.Text
+  durationMs Int?
+
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([problemId])
+  @@map("attempts")
+}
+
+/// One row per (user, tag). This is the weak/strong signal: accuracy is
+/// timesCorrect / timesSeen, where a "sighting" is either the tag appearing in
+/// the ground truth or the user incorrectly selecting it.
+model UserCategoryStat {
+  id     String       @id @default(cuid())
+  userId String
+  kind   CategoryKind
+  /// The enum member name, e.g. "SLIDING_WINDOW". Stored as text so both
+  /// taxonomies share one table.
+  key    String
+
+  timesSeen    Int      @default(0)
+  timesCorrect Int      @default(0)
+  lastSeenAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, key])
+  @@index([userId, kind])
+  @@map("user_category_stats")
+}
