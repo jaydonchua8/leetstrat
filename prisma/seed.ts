@@ -1,11 +1,15 @@
-import { PrismaClient } from '@prisma/client';
+import { CategoryKind, PrismaClient } from '@prisma/client';
+import { codexSlugFor } from '../src/services/grading.service';
+import { dataStructures, techniques } from './seed-data/codex';
+import { problems, sourceUrlFor } from './seed-data/problems';
 
 const prisma = new PrismaClient();
 
 /**
- * Minimal seed: one user and two problems with ground truth + edge cases
- * (including one decoy each) so /api/attempts/submit can be exercised
- * end-to-end immediately after `npm run db:migrate`.
+ * Idempotent: problems and codex entries are upserted by slug, reference
+ * answers by problemId. Edge cases are replaced wholesale on each run because
+ * they have no natural key — attempts store their own snapshot, so nothing
+ * references EdgeCase rows after grading.
  */
 async function main() {
   const user = await prisma.user.upsert({
@@ -14,63 +18,66 @@ async function main() {
     create: { email: 'demo@leetstrat.dev', username: 'demo' },
   });
 
-  const twoSum = await prisma.problem.upsert({
-    where: { slug: 'two-sum' },
-    update: {},
-    create: {
-      slug: 'two-sum',
-      title: 'Two Sum',
-      leetcodeId: 1,
-      difficulty: 'EASY',
-      description:
-        'Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.',
-      correctDataStructures: ['ARRAY', 'HASH_MAP'],
-      correctTechniques: ['SIMULATION'],
-      optimalTimeComplexity: 'O_N',
-      optimalSpaceComplexity: 'O_N',
-      optimalApproachSummary:
-        'Store each value-to-index mapping as you scan once, checking for the complement before inserting.',
-      edgeCases: {
-        create: [
-          { description: 'Duplicate values in the array', isRequired: true },
-          { description: 'Negative numbers', isRequired: true },
-          { description: 'Array is already sorted', isRequired: false }, // decoy
-        ],
+  for (const p of problems) {
+    const { edgeCases, ...answer } = p.answer;
+    const problem = await prisma.problem.upsert({
+      where: { slug: p.slug },
+      update: {
+        title: p.title,
+        description: p.description,
+        difficulty: p.difficulty,
+        leetcodeId: p.leetcodeId,
+        sourceUrl: sourceUrlFor(p),
       },
-    },
-  });
-
-  const longestSubstring = await prisma.problem.upsert({
-    where: { slug: 'longest-substring-without-repeating-characters' },
-    update: {},
-    create: {
-      slug: 'longest-substring-without-repeating-characters',
-      title: 'Longest Substring Without Repeating Characters',
-      leetcodeId: 3,
-      difficulty: 'MEDIUM',
-      description:
-        'Given a string s, find the length of the longest substring without repeating characters.',
-      correctDataStructures: ['STRING', 'HASH_SET'],
-      correctTechniques: ['SLIDING_WINDOW', 'TWO_POINTERS'],
-      optimalTimeComplexity: 'O_N',
-      optimalSpaceComplexity: 'O_N',
-      optimalApproachSummary:
-        'Expand a window to the right and shrink from the left whenever a duplicate enters, so each character is visited at most twice.',
-      edgeCases: {
-        create: [
-          { description: 'Empty string', isRequired: true },
-          { description: 'All characters identical', isRequired: true },
-          { description: 'String contains only digits', isRequired: false }, // decoy
-        ],
+      create: {
+        slug: p.slug,
+        title: p.title,
+        description: p.description,
+        difficulty: p.difficulty,
+        leetcodeId: p.leetcodeId,
+        sourceUrl: sourceUrlFor(p),
       },
-    },
-  });
+    });
 
-  // eslint-disable-next-line no-console
-  console.log({
+    const ref = await prisma.referenceAnswer.upsert({
+      where: { problemId: problem.id },
+      update: answer,
+      create: { problemId: problem.id, ...answer },
+    });
+
+    await prisma.edgeCase.deleteMany({ where: { referenceAnswerId: ref.id } });
+    await prisma.edgeCase.createMany({
+      data: edgeCases.map((ec) => ({
+        referenceAnswerId: ref.id,
+        description: ec.description,
+        matchers: ec.matchers,
+        explanation: ec.explanation ?? null,
+      })),
+    });
+  }
+
+  const codexRows = [
+    ...Object.entries(techniques).map(([key, e]) => ({ kind: CategoryKind.TECHNIQUE, key, ...e })),
+    ...Object.entries(dataStructures).map(([key, e]) => ({ kind: CategoryKind.DATA_STRUCTURE, key, ...e })),
+  ];
+  for (const row of codexRows) {
+    const slug = codexSlugFor(row.kind, row.key);
+    await prisma.codexEntry.upsert({
+      where: { slug },
+      update: { title: row.title, summary: row.summary, signals: row.signals },
+      create: { slug, ...row },
+    });
+  }
+
+  const counts = {
     userId: user.id,
-    problems: [twoSum.id, longestSubstring.id],
-  });
+    problems: await prisma.problem.count(),
+    referenceAnswers: await prisma.referenceAnswer.count(),
+    edgeCases: await prisma.edgeCase.count(),
+    codexEntries: await prisma.codexEntry.count(),
+  };
+  // eslint-disable-next-line no-console
+  console.log(counts);
 }
 
 main()
