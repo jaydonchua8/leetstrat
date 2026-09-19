@@ -125,3 +125,10 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .result-actions { display: flex; justify-content: flex-end; align-items: center; gap: 1.25rem; margin-top: 0.5rem; }
 .button-link { display: inline-block; font-weight: 600; color: #fff; background: var(--accent); border-radius: 6px; padding: 0.6rem 1.1rem; }
 .button-link:hover { text-decoration: none; opacity: 0.92; }
+
+.codex-group { margin-bottom: 1.5rem; }
+.codex-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; }
+.codex-grid a { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 0.9rem; color: var(--text); font-weight: 600; }
+.codex-grid a:hover { border-color: var(--accent); text-decoration: none; }
+.signal-list { margin: 0; padding-left: 1.25rem; }
+.signal-list li { margin-bottom: 0.35rem; }

@@ -1,12 +1,9 @@
 import { paths, useRoute } from './router';
 import { AttemptForm } from './pages/AttemptForm';
+import { CodexEntry, CodexList } from './pages/Codex';
 import { ProblemList } from './pages/ProblemList';
 import { Result } from './pages/Result';
 import { DemoUserField } from './DemoUserField';
-
-function Placeholder({ name }: { name: string }) {
-  return <p className="muted">{name} — coming next.</p>;
-}
 
 export function App() {
   const route = useRoute();
@@ -29,8 +26,8 @@ export function App() {
         {route.name === 'problems' && <ProblemList />}
         {route.name === 'problem' && <AttemptForm slug={route.slug} />}
         {route.name === 'attempt' && <Result id={route.id} />}
-        {route.name === 'codex' && <Placeholder name="Codex" />}
-        {route.name === 'codexEntry' && <Placeholder name={`Codex ${route.slug}`} />}
+        {route.name === 'codex' && <CodexList />}
+        {route.name === 'codexEntry' && <CodexEntry slug={route.slug} />}
       </main>
     </div>
   );
