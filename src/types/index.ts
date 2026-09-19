@@ -66,7 +66,7 @@ export interface SubmitAttemptInput {
   selectedSpaceComplexity: Complexity;
   /** Free text: the edge cases the learner says they would watch for. */
   edgeCasesText: string;
-  durationMs?: number;
+  durationMs?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------

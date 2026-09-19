@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 import { submitAttemptSchema } from '../validation/attempt.schema';
-import { submitAttempt } from '../services/attempt.service';
+import { getAttempt, submitAttempt } from '../services/attempt.service';
 import { StubFeedbackProvider } from '../services/feedback.service';
 import { ValidationError } from '../lib/errors';
 
@@ -23,6 +23,20 @@ export async function submitAttemptController(
       next(new ValidationError('Invalid submission payload', err.flatten()));
       return;
     }
+    next(err);
+  }
+}
+
+/** GET /api/attempts/:id */
+export async function getAttemptController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const result = await getAttempt(String(req.params.id));
+    res.json({ success: true, data: result });
+  } catch (err) {
     next(err);
   }
 }

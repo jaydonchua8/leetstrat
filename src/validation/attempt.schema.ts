@@ -9,15 +9,11 @@ import { AlgorithmicTechnique, Complexity, DataStructure } from '../types';
 export const submitAttemptSchema = z.object({
   userId: z.string().cuid(),
   problemId: z.string().cuid(),
-  selectedDataStructures: z
-    .array(z.nativeEnum(DataStructure))
-    .max(8, 'Select at most 8 data structures'),
-  selectedTechniques: z
-    .array(z.nativeEnum(AlgorithmicTechnique))
-    .max(8, 'Select at most 8 techniques'),
+  selectedDataStructure: z.nativeEnum(DataStructure),
+  selectedTechnique: z.nativeEnum(AlgorithmicTechnique),
   selectedTimeComplexity: z.nativeEnum(Complexity),
   selectedSpaceComplexity: z.nativeEnum(Complexity),
-  selectedEdgeCaseIds: z.array(z.string().cuid()).max(20),
+  edgeCasesText: z.string().max(2000, 'Keep edge cases under 2000 characters'),
   durationMs: z.number().int().positive().max(3_600_000).optional(),
 });
 

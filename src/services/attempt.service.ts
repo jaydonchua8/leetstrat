@@ -1,45 +1,83 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { NotFoundError } from '../lib/errors';
 import {
+  AttemptResult,
+  GradedAttempt,
   ProblemAnswerKey,
+  ProblemSummary,
   SubmitAttemptInput,
   SubmitAttemptResponse,
 } from '../types';
-import { buildTagOutcomes, gradeAttempt } from './grading.service';
+import { buildCodexRefs, buildTagOutcomes, gradeAttempt } from './grading.service';
 import {
   applyAttemptCounters,
   applyTagOutcomes,
   buildAccuracyStats,
 } from './analytics.service';
+import { resolveCodexLinks } from './codex.service';
 import { FeedbackProvider } from './feedback.service';
 
-/** Loads ground truth and flattens it into the shape the grader expects. */
-async function loadAnswerKey(problemId: string): Promise<ProblemAnswerKey> {
+const problemSummarySelect = {
+  id: true,
+  slug: true,
+  title: true,
+  difficulty: true,
+  leetcodeId: true,
+} as const;
+
+/**
+ * Loads the problem plus its ground truth, returning the public summary and
+ * the answer key flattened into the shape the grader expects.
+ */
+async function loadProblemForGrading(
+  problemId: string,
+): Promise<{ summary: ProblemSummary; key: ProblemAnswerKey }> {
   const problem = await prisma.problem.findUnique({
     where: { id: problemId },
     include: {
-      edgeCases: { select: { id: true, description: true, isRequired: true } },
+      referenceAnswer: {
+        include: {
+          edgeCases: {
+            select: { id: true, description: true, matchers: true, explanation: true },
+          },
+        },
+      },
     },
   });
 
   if (!problem) throw new NotFoundError(`Problem ${problemId} not found`);
+  // A problem without an answer key can't be graded; treat it as unpublished.
+  if (!problem.referenceAnswer) {
+    throw new NotFoundError(`Problem ${problemId} has no reference answer`);
+  }
 
-  return {
+  const ref = problem.referenceAnswer;
+  const summary: ProblemSummary = {
     id: problem.id,
+    slug: problem.slug,
     title: problem.title,
     difficulty: problem.difficulty,
-    correctDataStructures: problem.correctDataStructures,
-    correctTechniques: problem.correctTechniques,
-    optimalTimeComplexity: problem.optimalTimeComplexity,
-    optimalSpaceComplexity: problem.optimalSpaceComplexity,
-    optimalApproachSummary: problem.optimalApproachSummary,
-    requiredEdgeCaseIds: problem.edgeCases
-      .filter((e) => e.isRequired)
-      .map((e) => e.id),
-    edgeCaseDescriptions: Object.fromEntries(
-      problem.edgeCases.map((e) => [e.id, e.description]),
-    ),
+    leetcodeId: problem.leetcodeId,
   };
+  const key: ProblemAnswerKey = {
+    id: problem.id,
+    slug: problem.slug,
+    title: problem.title,
+    difficulty: problem.difficulty,
+    primaryDataStructure: ref.primaryDataStructure,
+    acceptedDataStructures: ref.acceptedDataStructures,
+    primaryTechnique: ref.primaryTechnique,
+    acceptedTechniques: ref.acceptedTechniques,
+    primaryTimeComplexity: ref.primaryTimeComplexity,
+    acceptedTimeComplexities: ref.acceptedTimeComplexities,
+    primarySpaceComplexity: ref.primarySpaceComplexity,
+    acceptedSpaceComplexities: ref.acceptedSpaceComplexities,
+    approachSummary: ref.approachSummary,
+    explanation: ref.explanation,
+    edgeCases: ref.edgeCases,
+  };
+  return { summary, key };
 }
 
 /**
@@ -48,12 +86,13 @@ async function loadAnswerKey(problemId: string): Promise<ProblemAnswerKey> {
  *   2. grade                (pure)
  *   3. generate feedback    (network, outside tx — never hold a tx open on I/O)
  *   4. persist + analytics  (single tx)
+ *   5. resolve codex links  (read, outside tx)
  */
 export async function submitAttempt(
   input: SubmitAttemptInput,
   feedbackProvider: FeedbackProvider,
 ): Promise<SubmitAttemptResponse> {
-  const key = await loadAnswerKey(input.problemId);
+  const { summary, key } = await loadProblemForGrading(input.problemId);
 
   const userExists = await prisma.user.findUnique({
     where: { id: input.userId },
@@ -73,22 +112,23 @@ export async function submitAttempt(
       data: {
         userId: input.userId,
         problemId: input.problemId,
-        selectedDataStructures: graded.dataStructures.selected,
-        selectedTechniques: graded.techniques.selected,
+        selectedDataStructure: input.selectedDataStructure,
+        selectedTechnique: input.selectedTechnique,
         selectedTimeComplexity: input.selectedTimeComplexity,
         selectedSpaceComplexity: input.selectedSpaceComplexity,
-        selectedEdgeCaseIds: graded.edgeCases.selected,
-        dataStructuresCorrect: graded.dataStructures.isCorrect,
-        techniquesCorrect: graded.techniques.isCorrect,
+        edgeCasesText: input.edgeCasesText,
+        dataStructureCorrect: graded.dataStructure.isCorrect,
+        techniqueCorrect: graded.technique.isCorrect,
         timeComplexityCorrect: graded.timeComplexity.isCorrect,
         spaceComplexityCorrect: graded.spaceComplexity.isCorrect,
         edgeCasesCorrect: graded.edgeCases.isCorrect,
         isFullyCorrect: graded.isFullyCorrect,
         score: graded.score,
+        breakdown: graded as unknown as Prisma.InputJsonValue,
         feedback,
-        durationMs: input.durationMs,
+        durationMs: input.durationMs ?? null,
       },
-      select: { id: true },
+      select: { id: true, createdAt: true },
     });
 
     await applyTagOutcomes(tx, input.userId, outcomes);
@@ -99,22 +139,57 @@ export async function submitAttempt(
     );
     const stats = await buildAccuracyStats(tx, input.userId, totals, outcomes);
 
-    return { attemptId: attempt.id, stats };
+    return { attemptId: attempt.id, createdAt: attempt.createdAt, stats };
   });
+
+  const codexLinks = await resolveCodexLinks(buildCodexRefs(graded));
 
   return {
     attemptId: result.attemptId,
-    problemId: key.id,
-    breakdown: {
-      dataStructures: graded.dataStructures,
-      techniques: graded.techniques,
-      timeComplexity: graded.timeComplexity,
-      spaceComplexity: graded.spaceComplexity,
-      edgeCases: { ...graded.edgeCases, descriptions: key.edgeCaseDescriptions },
-    },
+    problem: summary,
+    breakdown: graded,
     isFullyCorrect: graded.isFullyCorrect,
     score: graded.score,
-    stats: result.stats,
+    reference: { approachSummary: key.approachSummary, explanation: key.explanation },
+    codexLinks,
     feedback,
+    createdAt: result.createdAt.toISOString(),
+    stats: result.stats,
+  };
+}
+
+/**
+ * Re-hydrates a scored result from the stored breakdown snapshot. The
+ * reference explanation is read live (an improved explanation should reach
+ * old attempts), but the grading itself is never recomputed.
+ */
+export async function getAttempt(attemptId: string): Promise<AttemptResult> {
+  const attempt = await prisma.attempt.findUnique({
+    where: { id: attemptId },
+    include: {
+      problem: {
+        select: {
+          ...problemSummarySelect,
+          referenceAnswer: { select: { approachSummary: true, explanation: true } },
+        },
+      },
+    },
+  });
+  if (!attempt) throw new NotFoundError(`Attempt ${attemptId} not found`);
+
+  const graded = attempt.breakdown as unknown as GradedAttempt;
+  const { referenceAnswer, ...problem } = attempt.problem;
+  const codexLinks = await resolveCodexLinks(buildCodexRefs(graded));
+
+  return {
+    attemptId: attempt.id,
+    problem,
+    breakdown: graded,
+    isFullyCorrect: attempt.isFullyCorrect,
+    score: attempt.score,
+    reference: referenceAnswer ?? { approachSummary: '', explanation: '' },
+    codexLinks,
+    feedback: attempt.feedback,
+    createdAt: attempt.createdAt.toISOString(),
   };
 }
