@@ -73,7 +73,7 @@ enum Complexity {
   O_N_TIMES_M
 }
 
-/// Distinguishes which taxonomy a UserCategoryStat row belongs to.
+/// Which taxonomy a UserCategoryStat or CodexEntry row belongs to.
 enum CategoryKind {
   DATA_STRUCTURE
   TECHNIQUE
@@ -101,6 +101,8 @@ model User {
   @@map("users")
 }
 
+/// The problem *statement* only. Ground truth lives on ReferenceAnswer so the
+/// list/fetch endpoints can never leak it by forgetting a `select`.
 model Problem {
   id          String     @id @default(cuid())
   slug        String     @unique
@@ -110,64 +112,95 @@ model Problem {
   leetcodeId  Int?       @unique
   sourceUrl   String?
 
-  // --- Ground truth ---
-  correctDataStructures  DataStructure[]
-  correctTechniques      AlgorithmicTechnique[]
-  optimalTimeComplexity  Complexity
-  optimalSpaceComplexity Complexity
-
-  /// Seed text for the LLM feedback prompt. Not shown to the user pre-attempt.
-  optimalApproachSummary String @db.Text
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  edgeCases EdgeCase[]
-  attempts  Attempt[]
+  referenceAnswer ReferenceAnswer?
+  attempts        Attempt[]
 
   @@index([difficulty])
   @@map("problems")
 }
 
-/// Edge cases are rows rather than a String[] because the UI presents a mixed
-/// list of real edge cases and plausible decoys. `isRequired = false` rows are
-/// the decoys — selecting one is a false positive.
+/// Ground truth for one problem (1:1). Every categorical field is a
+/// `primary` + `accepted[]` pair: the learner is correct if their pick is in
+/// `accepted`, and misses are reported against `primary`. This is what lets
+/// "Two Pointers" count for a Sliding Window problem without making the
+/// grader lie about which answer is canonical.
+model ReferenceAnswer {
+  id        String @id @default(cuid())
+  problemId String @unique
+
+  primaryDataStructure   DataStructure
+  acceptedDataStructures DataStructure[]
+
+  primaryTechnique   AlgorithmicTechnique
+  acceptedTechniques AlgorithmicTechnique[]
+
+  primaryTimeComplexity    Complexity
+  acceptedTimeComplexities Complexity[]
+
+  primarySpaceComplexity    Complexity
+  acceptedSpaceComplexities Complexity[]
+
+  /// What to do, in one or two sentences.
+  approachSummary String @db.Text
+  /// Why this is the intended approach — the signals in the statement that
+  /// should have pointed here. Shown on the result screen.
+  explanation     String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  problem   Problem    @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  edgeCases EdgeCase[]
+
+  @@map("reference_answers")
+}
+
+/// One edge case the learner should have named. The learner answers in free
+/// text, so each row carries lowercase `matchers` (phrases, synonyms,
+/// shorthand like "n == 0"); any match counts as a hit.
 model EdgeCase {
-  id          String  @id @default(cuid())
-  problemId   String
-  description String
-  isRequired  Boolean @default(true)
-  explanation String? @db.Text
+  id                String   @id @default(cuid())
+  referenceAnswerId String
+  description       String
+  matchers          String[]
+  explanation       String?  @db.Text
 
-  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  referenceAnswer ReferenceAnswer @relation(fields: [referenceAnswerId], references: [id], onDelete: Cascade)
 
-  @@index([problemId])
+  @@index([referenceAnswerId])
   @@map("edge_cases")
 }
 
-/// An immutable log of one submission. Grading results are snapshotted so that
-/// later edits to a Problem's ground truth don't rewrite history.
+/// An immutable log of one submission. The full graded breakdown is
+/// snapshotted as JSON so GET /attempts/:id returns exactly what the learner
+/// saw, even if the ReferenceAnswer is edited later. The boolean columns are
+/// duplicated out of the JSON so they can be indexed and queried.
 model Attempt {
   id        String @id @default(cuid())
   userId    String
   problemId String
 
   // --- User submission ---
-  selectedDataStructures  DataStructure[]
-  selectedTechniques      AlgorithmicTechnique[]
+  selectedDataStructure   DataStructure
+  selectedTechnique       AlgorithmicTechnique
   selectedTimeComplexity  Complexity
   selectedSpaceComplexity Complexity
-  selectedEdgeCaseIds     String[]
+  edgeCasesText           String               @db.Text
 
   // --- Grading snapshot ---
-  dataStructuresCorrect  Boolean
-  techniquesCorrect      Boolean
+  dataStructureCorrect   Boolean
+  techniqueCorrect       Boolean
   timeComplexityCorrect  Boolean
   spaceComplexityCorrect Boolean
   edgeCasesCorrect       Boolean
   isFullyCorrect         Boolean
   /// Weighted 0..1 partial-credit score. See GRADING_WEIGHTS.
   score                  Float
+  /// Serialized GradedAttempt.
+  breakdown              Json
 
   /// Null when the feedback provider failed or was disabled — grading must
   /// never block on the LLM call.
@@ -204,4 +237,24 @@ model UserCategoryStat {
   @@unique([userId, kind, key])
   @@index([userId, kind])
   @@map("user_category_stats")
+}
+
+/// Browsable reference for one pattern or data structure. `(kind, key)` is the
+/// enum member it documents, so any graded field maps to exactly one entry —
+/// that is how result screens link a miss straight to the relevant page.
+model CodexEntry {
+  id      String       @id @default(cuid())
+  slug    String       @unique
+  kind    CategoryKind
+  key     String
+  title   String
+  summary String       @db.Text
+  /// "Reach for this when you see..." cues, one per element.
+  signals String[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([kind, key])
+  @@map("codex_entries")
 }
