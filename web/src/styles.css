@@ -98,3 +98,30 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .attempt-form .field > span { font-weight: 600; font-size: 0.9rem; }
 .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 1rem; }
 .form-actions { display: flex; justify-content: flex-end; }
+
+.score { display: flex; align-items: center; gap: 0.75rem; }
+.score-value { font-size: 1.6rem; font-weight: 700; }
+
+.fields { padding: 0.25rem 1.25rem; }
+.field-row { padding: 0.9rem 0 0.9rem 0.9rem; border-left: 3px solid var(--ok); }
+.field-row + .field-row { border-top: 1px solid var(--border); }
+.field-row.is-bad { border-left-color: var(--bad); }
+.field-label { font-size: 0.8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.field-pick { margin: 0.15rem 0; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.field-answer { margin-top: 0.25rem; }
+.field-row p { margin: 0.3rem 0 0; }
+
+.your-text { margin: 0 0 0.75rem; padding: 0.5rem 0.9rem; border-left: 3px solid var(--border); color: var(--muted); font-style: italic; white-space: pre-wrap; }
+.edge-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+.edge-list { list-style: none; margin: 0; padding: 0; }
+.edge-list li { padding: 0.35rem 0 0.35rem 1.4rem; position: relative; }
+.edge-list li::before { position: absolute; left: 0; font-weight: 700; }
+.edge-list li.is-ok::before { content: '✓'; color: var(--ok); }
+.edge-list li.is-bad::before { content: '✗'; color: var(--bad); }
+
+.why p { white-space: pre-wrap; }
+.codex-links { margin: 0 0 0.75rem; padding-left: 1.25rem; }
+.stat-list { margin: 0; padding-left: 1.25rem; }
+.result-actions { display: flex; justify-content: flex-end; align-items: center; gap: 1.25rem; margin-top: 0.5rem; }
+.button-link { display: inline-block; font-weight: 600; color: #fff; background: var(--accent); border-radius: 6px; padding: 0.6rem 1.1rem; }
+.button-link:hover { text-decoration: none; opacity: 0.92; }
