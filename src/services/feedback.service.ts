@@ -13,21 +13,24 @@ export function buildFeedbackPrompt(
   graded: GradedAttempt,
   key: ProblemAnswerKey,
 ): string {
-  const missedTechniques = [
-    ...graded.techniques.missing,
-    ...graded.techniques.extra,
-  ];
+  const missedEdgeCases = graded.edgeCases.matches
+    .filter((m) => !m.matched)
+    .map((m) => m.description);
 
   return [
     `Problem: ${key.title} (${key.difficulty})`,
-    `Optimal approach: ${key.optimalApproachSummary}`,
-    `Optimal complexity: time ${COMPLEXITY_LABEL[key.optimalTimeComplexity]}, ` +
-      `space ${COMPLEXITY_LABEL[key.optimalSpaceComplexity]}`,
-    `Learner chose techniques: ${graded.techniques.selected.join(', ') || 'none'}`,
+    `Optimal approach: ${key.approachSummary}`,
+    `Why: ${key.explanation}`,
+    `Optimal complexity: time ${COMPLEXITY_LABEL[key.primaryTimeComplexity]}, ` +
+      `space ${COMPLEXITY_LABEL[key.primarySpaceComplexity]}`,
+    `Learner chose technique: ${graded.technique.selected}` +
+      (graded.technique.isCorrect ? '' : ` (intended: ${graded.technique.primary})`),
+    `Learner chose data structure: ${graded.dataStructure.selected}` +
+      (graded.dataStructure.isCorrect ? '' : ` (intended: ${graded.dataStructure.primary})`),
     `Learner chose time complexity: ${graded.timeComplexity.selectedLabel} ` +
       `(${graded.timeComplexity.direction})`,
-    missedTechniques.length > 0
-      ? `Learner's technique gap: ${missedTechniques.join(', ')}`
+    missedEdgeCases.length > 0
+      ? `Learner did not mention edge cases: ${missedEdgeCases.join('; ')}`
       : '',
     '',
     'Write exactly two sentences explaining why the optimal approach works. ' +
@@ -43,7 +46,7 @@ export function buildFeedbackPrompt(
  * Example replacement (Anthropic SDK):
  *
  *   const res = await anthropic.messages.create({
- *     model: 'claude-sonnet-4-6',
+ *     model: 'claude-sonnet-5',
  *     max_tokens: 200,
  *     messages: [{ role: 'user', content: buildFeedbackPrompt(graded, key) }],
  *   });
@@ -57,15 +60,14 @@ export class StubFeedbackProvider implements FeedbackProvider {
     key: ProblemAnswerKey,
   ): Promise<string | null> {
     try {
-      const technique = key.correctTechniques[0] ?? 'the intended technique';
       const opener = graded.isFullyCorrect
         ? 'Correct on all counts.'
-        : `The optimal approach relies on ${technique}.`;
+        : `The intended approach is ${key.primaryTechnique.replace(/_/g, ' ').toLowerCase()}.`;
 
       return (
-        `${opener} ${key.optimalApproachSummary} This lands at ` +
-        `${COMPLEXITY_LABEL[key.optimalTimeComplexity]} time and ` +
-        `${COMPLEXITY_LABEL[key.optimalSpaceComplexity]} space.`
+        `${opener} ${key.approachSummary} This lands at ` +
+        `${COMPLEXITY_LABEL[key.primaryTimeComplexity]} time and ` +
+        `${COMPLEXITY_LABEL[key.primarySpaceComplexity]} space.`
       );
     } catch (err) {
       // eslint-disable-next-line no-console

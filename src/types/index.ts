@@ -43,14 +43,14 @@ export const COMPLEXITY_RANK: Record<Complexity, number | null> = {
 export const COMPLEXITY_LABEL: Record<Complexity, string> = {
   [Complexity.O_1]: 'O(1)',
   [Complexity.O_LOG_N]: 'O(log n)',
-  [Complexity.O_SQRT_N]: 'O(\u221An)',
+  [Complexity.O_SQRT_N]: 'O(√n)',
   [Complexity.O_N]: 'O(n)',
   [Complexity.O_N_LOG_N]: 'O(n log n)',
-  [Complexity.O_N_SQUARED]: 'O(n\u00B2)',
-  [Complexity.O_N_CUBED]: 'O(n\u00B3)',
-  [Complexity.O_2_POW_N]: 'O(2\u207F)',
+  [Complexity.O_N_SQUARED]: 'O(n²)',
+  [Complexity.O_N_CUBED]: 'O(n³)',
+  [Complexity.O_2_POW_N]: 'O(2ⁿ)',
   [Complexity.O_N_FACTORIAL]: 'O(n!)',
-  [Complexity.O_N_TIMES_M]: 'O(n \u00B7 m)',
+  [Complexity.O_N_TIMES_M]: 'O(n · m)',
 };
 
 // ---------------------------------------------------------------------------
@@ -60,31 +60,60 @@ export const COMPLEXITY_LABEL: Record<Complexity, string> = {
 export interface SubmitAttemptInput {
   userId: string;
   problemId: string;
-  selectedDataStructures: DataStructure[];
-  selectedTechniques: AlgorithmicTechnique[];
+  selectedDataStructure: DataStructure;
+  selectedTechnique: AlgorithmicTechnique;
   selectedTimeComplexity: Complexity;
   selectedSpaceComplexity: Complexity;
-  /** EdgeCase row IDs the user checked, including any decoys. */
-  selectedEdgeCaseIds: string[];
+  /** Free text: the edge cases the learner says they would watch for. */
+  edgeCasesText: string;
   durationMs?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Answer key — ground truth pulled from the DB, decoupled from the Prisma row
+// ---------------------------------------------------------------------------
+
+export interface EdgeCaseKey {
+  id: string;
+  description: string;
+  /** Lowercase phrases; any substring hit in the learner's text counts. */
+  matchers: string[];
+  explanation: string | null;
+}
+
+export interface ProblemAnswerKey {
+  id: string;
+  slug: string;
+  title: string;
+  difficulty: Difficulty;
+  primaryDataStructure: DataStructure;
+  acceptedDataStructures: DataStructure[];
+  primaryTechnique: AlgorithmicTechnique;
+  acceptedTechniques: AlgorithmicTechnique[];
+  primaryTimeComplexity: Complexity;
+  acceptedTimeComplexities: Complexity[];
+  primarySpaceComplexity: Complexity;
+  acceptedSpaceComplexities: Complexity[];
+  approachSummary: string;
+  explanation: string;
+  edgeCases: EdgeCaseKey[];
 }
 
 // ---------------------------------------------------------------------------
 // Grading result types
 // ---------------------------------------------------------------------------
 
-export interface SetComparison<T extends string> {
+/**
+ * One categorical pick graded against a primary answer plus accepted
+ * alternatives. `primary` is always a member of `accepted`.
+ */
+export interface ChoiceComparison<T extends string> {
   isCorrect: boolean;
-  selected: T[];
-  expected: T[];
-  /** Selected ∩ expected. */
-  matched: T[];
-  /** Expected \ selected — the user failed to recall these. */
-  missing: T[];
-  /** Selected \ expected — the user over-applied these. */
-  extra: T[];
-  /** |intersection| / |union|, 1 when both sets are empty. */
-  jaccard: number;
+  selected: T;
+  primary: T;
+  accepted: T[];
+  /** Correct, but via an alternative rather than the canonical answer. */
+  isAlternative: boolean;
 }
 
 export type ComplexityDirection =
@@ -93,38 +122,57 @@ export type ComplexityDirection =
   | 'UNDERESTIMATE'
   | 'INCOMPARABLE';
 
-export interface ComplexityComparison {
-  isCorrect: boolean;
-  selected: Complexity;
-  expected: Complexity;
+export interface ComplexityComparison extends ChoiceComparison<Complexity> {
   selectedLabel: string;
-  expectedLabel: string;
+  primaryLabel: string;
+  /** Selected relative to primary; EXACT only when selected === primary. */
   direction: ComplexityDirection;
 }
 
+export interface EdgeCaseMatch {
+  id: string;
+  description: string;
+  matched: boolean;
+  /** The matcher phrase that hit, for transparency in the UI. */
+  matchedOn: string | null;
+  explanation: string | null;
+}
+
+export interface EdgeCaseComparison {
+  /** Every reference edge case was mentioned. */
+  isCorrect: boolean;
+  text: string;
+  matches: EdgeCaseMatch[];
+  matchedCount: number;
+  total: number;
+  /** matchedCount / total, 1 when there are no reference edge cases. */
+  recall: number;
+}
+
 export interface GradedAttempt {
-  dataStructures: SetComparison<DataStructure>;
-  techniques: SetComparison<AlgorithmicTechnique>;
+  dataStructure: ChoiceComparison<DataStructure>;
+  technique: ChoiceComparison<AlgorithmicTechnique>;
   timeComplexity: ComplexityComparison;
   spaceComplexity: ComplexityComparison;
-  edgeCases: SetComparison<string>;
+  edgeCases: EdgeCaseComparison;
   isFullyCorrect: boolean;
   /** Weighted partial credit in [0, 1]. */
   score: number;
 }
 
-/** Ground truth pulled from the DB, decoupled from the Prisma row shape. */
-export interface ProblemAnswerKey {
-  id: string;
+/** Why a codex entry is being surfaced on a result screen. */
+export type CodexLinkReason = 'INTENDED' | 'OVER_APPLIED';
+
+export interface CodexRef {
+  kind: CategoryKind;
+  key: string;
+  slug: string;
+  reason: CodexLinkReason;
+}
+
+/** A CodexRef resolved against the codex table. */
+export interface CodexLink extends CodexRef {
   title: string;
-  difficulty: Difficulty;
-  correctDataStructures: DataStructure[];
-  correctTechniques: AlgorithmicTechnique[];
-  optimalTimeComplexity: Complexity;
-  optimalSpaceComplexity: Complexity;
-  optimalApproachSummary: string;
-  requiredEdgeCaseIds: string[];
-  edgeCaseDescriptions: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,22 +211,52 @@ export interface UserAccuracyStats {
 }
 
 // ---------------------------------------------------------------------------
-// API response
+// API responses
 // ---------------------------------------------------------------------------
 
-export interface SubmitAttemptResponse {
+/** Statement only — never carries the reference answer. */
+export interface ProblemSummary {
+  id: string;
+  slug: string;
+  title: string;
+  difficulty: Difficulty;
+  leetcodeId: number | null;
+}
+
+export interface ProblemDetail extends ProblemSummary {
+  description: string;
+  sourceUrl: string | null;
+}
+
+export interface CodexEntrySummary {
+  id: string;
+  slug: string;
+  kind: CategoryKind;
+  key: string;
+  title: string;
+}
+
+export interface CodexEntryDetail extends CodexEntrySummary {
+  summary: string;
+  signals: string[];
+}
+
+/** The scored result, returned by both submit and GET /attempts/:id. */
+export interface AttemptResult {
   attemptId: string;
-  problemId: string;
-  breakdown: {
-    dataStructures: SetComparison<DataStructure>;
-    techniques: SetComparison<AlgorithmicTechnique>;
-    timeComplexity: ComplexityComparison;
-    spaceComplexity: ComplexityComparison;
-    edgeCases: SetComparison<string> & { descriptions: Record<string, string> };
-  };
+  problem: ProblemSummary;
+  breakdown: GradedAttempt;
   isFullyCorrect: boolean;
   score: number;
-  stats: UserAccuracyStats;
+  /** What to do and why it is the intended approach. */
+  reference: { approachSummary: string; explanation: string };
+  /** Codex entries for the intended answer and anything over-applied. */
+  codexLinks: CodexLink[];
   /** Null if the LLM call failed or is disabled; the client should degrade. */
   feedback: string | null;
+  createdAt: string;
+}
+
+export interface SubmitAttemptResponse extends AttemptResult {
+  stats: UserAccuracyStats;
 }
