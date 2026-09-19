@@ -33,7 +33,25 @@ Tests (pure grading module, no database needed):
 npm test
 ```
 
-Other scripts: `npm run build` (tsc → `dist/`), `npm start`, `npm run db:studio`.
+### Web client
+
+```bash
+npm run web:dev                 # Vite on http://localhost:5173, proxies /api to :3000
+```
+
+Run `npm run dev` in another terminal for the API. Paste the demo `userId`
+from the seed into the "Demo user" field in the top bar (it is kept in
+localStorage; `VITE_DEMO_USER_ID` in `.env` pre-fills it).
+
+For a single-process setup, build the client and let Express serve it:
+
+```bash
+npm run build                   # tsc → dist/ and vite → web/dist
+npm start                       # API and client on http://localhost:3000
+```
+
+Other scripts: `npm run typecheck` (server + web), `npm run db:studio`,
+`npm run gen:enums` (see below).
 
 ## The loop, as HTTP
 
@@ -90,6 +108,13 @@ prisma/
   seed.ts                Idempotent loader
   seed-data/problems.ts  12 problems with reference answers + edge cases
   seed-data/codex.ts     One codex entry per technique / data structure
+scripts/
+  gen-enums.ts           Emits web/src/generated/enums.ts from the Prisma client
+web/
+  src/generated/enums.ts GENERATED — enum members + labels for the browser
+  src/api.ts             fetch client; DTO types are type-only imports from src/types
+  src/router.ts          Hash router (#/problems, #/problems/:slug, #/attempts/:id, #/codex, #/codex/:slug)
+  src/pages/             ProblemList, AttemptForm, Result, Codex
 src/
   types/index.ts         Re-exported enums, DTOs, grading + analytics types
   lib/                   Prisma singleton, typed AppError classes
@@ -128,6 +153,12 @@ lowercase matcher phrases; the learner's text is normalised and checked for
 any substring hit. Only recall is scored — unrecognised text is never
 penalised. This is the weakest part of the grader (see `NOTES.md`), which is
 why it carries the lowest weight.
+
+**The client never hand-copies an enum.** `npm run gen:enums` (also run by
+`db:generate`) writes `web/src/generated/enums.ts` from the Prisma client, and
+the client's DTO types are `import type`d straight from `src/types`. A schema
+change that isn't regenerated fails the web typecheck instead of silently
+drifting.
 
 **Grading is a pure function.** `gradeAttempt(input, key)` has no I/O, so the
 tests need no Postgres.

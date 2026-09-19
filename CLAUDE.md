@@ -53,12 +53,29 @@ judge. If an idea in that direction comes up, add it to `NOTES.md` and move on.
   adding a codex entry.
 - Re-run `npm run db:seed` after editing; it must stay safe to run twice.
 
+## Web client (`web/`)
+
+- Vite 5 + React 18, no UI framework, no router library (hash routing in
+  `web/src/router.ts`). Vite is pinned to 5 because vitest 2 requires it.
+- **Never write an enum member by hand in `web/`.** Dropdown options and
+  labels come from `web/src/generated/enums.ts`; run `npm run gen:enums` after
+  any enum change and commit the output. DTO types come from
+  `import type { … } from '../../src/types'` — never redeclare response shapes.
+- One file per page in `web/src/pages/`; shared bits in `ui.tsx`. Pages use
+  `useAsync` and render the three states (loading / error / ready) explicitly.
+- The problem list and attempt screens must never show anything from
+  `ReferenceAnswer`. The API doesn't send it; don't invent hints client-side.
+- Demo user id: `web/src/demoUser.ts` (localStorage). There is no users
+  endpoint on purpose.
+- Verify UI changes in a real browser against the running server, not with
+  mocks. `npm run web:build` then hard-reload — `index.html` caches.
+
 ## TypeScript
 
 - `strict` + `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess`. Optional
   DTO fields are typed `?: T | undefined`; convert `undefined` to `null` at the
   Prisma boundary.
-- `noEmit` typecheck before committing: `npx tsc --noEmit -p tsconfig.json`.
+- `npm run typecheck` (server + web) before committing.
 - Comments explain *why*, in the style already present (short block comments
   above functions, `///` doc comments in the schema).
 

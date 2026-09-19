@@ -57,6 +57,23 @@ on `explanation` to say so, as the seed currently does.
 - **One codex entry per enum member** (36 total) rather than just the five
   brief patterns, so an over-applied link always resolves.
 
+### Frontend session
+
+- **Demo user id lives in the nav + localStorage.** There is no users
+  endpoint and adding one was out of scope. `VITE_DEMO_USER_ID` pre-fills it.
+- **Stats only show right after a submit.** `POST /attempts/submit` returns
+  `stats`; `GET /attempts/:id` doesn't. The submit response is kept in memory
+  (`web/src/lastSubmit.ts`) so the fresh result page shows stats; a reload
+  loses them. A `GET /users/:id/stats` endpoint would fix this properly.
+- **Hash routing, not history routing.** Avoids a server-side SPA fallback;
+  Express only serves `/`.
+- **Statement renderer is ~30 lines, not a markdown library.** The seed's
+  format (paragraphs, `- ` bullets, backticks) is ours to control.
+- **Vite pinned to 5, `@vitejs/plugin-react` to 4** because vitest 2 peers on
+  Vite 5. Upgrade both together with vitest.
+- **Edge-case rendering says "matched on …"** so learners can see the phrase
+  matching is literal. Pairs with the brittleness note above.
+
 ## Out of scope this session (noted, not built)
 
 - Dungeon / boss fights / any gamification layer. Natural hook if built later:
